@@ -1,0 +1,213 @@
+import Transaction, { ITransaction } from '../models/Transaction.model';
+import Event from '../models/Event.model';
+import Ticket from '../models/Ticket.model';
+import couponService from './coupon.service';
+import emailService from './email.service';
+import { generateTicketNumber, generateQRCode } from '../utils/ticket.util';
+import mongoose from 'mongoose';
+
+class TransactionService {
+  async createTransaction(
+    userId: string,
+    eventId: string,
+    ticketType: string,
+    quantity: number,
+    paymentGateway: string,
+    couponCode?: string
+  ): Promise<any> {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const existingPending = await Transaction.findOne({
+        userId,
+        eventId,
+        paymentStatus: 'pending',
+        createdAt: { $gt: new Date(Date.now() - 5 * 60 * 1000) }
+      }).session(session);
+
+      if (existingPending) {
+        throw new Error('You already have a pending transaction for this event');
+      }
+
+      const event = await Event.findById(eventId).session(session);
+      if (!event) throw new Error('Event not found');
+      if (event.status !== 'active') throw new Error('Event is not active');
+
+      let pricePerTicket = 0;
+      let availableTickets = 0;
+      
+      if (ticketType === 'regular') {
+        pricePerTicket = event.ticketTypes.regular.price;
+        availableTickets = event.ticketTypes.regular.total - event.ticketTypes.regular.sold;
+      } else if (ticketType === 'vip') {
+        pricePerTicket = event.ticketTypes.vip.price;
+        availableTickets = event.ticketTypes.vip.total - event.ticketTypes.vip.sold;
+      } else if (ticketType === 'vvip') {
+        pricePerTicket = event.ticketTypes.vvip.price;
+        availableTickets = event.ticketTypes.vvip.total - event.ticketTypes.vvip.sold;
+      }
+
+      if (availableTickets < quantity) {
+        throw new Error(`Only ${availableTickets} tickets available for ${ticketType}`);
+      }
+
+      const subtotal = pricePerTicket * quantity;
+      let discountAmount = 0;
+
+      if (couponCode) {
+        const couponResult = await couponService.verifyCoupon(couponCode, eventId, ticketType, subtotal);
+        discountAmount = couponResult.discountAmount;
+      }
+
+      const totalAmount = subtotal - discountAmount;
+      const transactionId = `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+
+      const transaction = new Transaction({
+        transactionId,
+        userId,
+        eventId,
+        ticketType,
+        quantity,
+        unitPrice: pricePerTicket,
+        subtotal,
+        discountAmount,
+        couponCode,
+        totalAmount,
+        paymentGateway,
+        paymentStatus: 'pending'
+      });
+
+      await transaction.save({ session });
+      await session.commitTransaction();
+
+      return {
+        transactionId,
+        transaction,
+        paymentUrl: `https://sandbox.sslcommerz.com/EasyCheckOut/${transactionId}`,
+        amount: totalAmount,
+        currency: 'BDT'
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  async handlePaymentCallback(transactionId: string, gatewayTransactionId: string, status: string): Promise<any> {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const transaction = await Transaction.findOne({ transactionId }).session(session);
+      if (!transaction) throw new Error('Transaction not found');
+
+      if (status === 'success') {
+        transaction.paymentStatus = 'success';
+        transaction.transactionDetails = {
+          gatewayTransactionId,
+          paymentTime: new Date()
+        };
+
+        await transaction.save({ session });
+
+        const event = await Event.findById(transaction.eventId).session(session);
+        if (event) {
+          if (transaction.ticketType === 'regular') {
+            event.ticketTypes.regular.sold += transaction.quantity;
+          } else if (transaction.ticketType === 'vip') {
+            event.ticketTypes.vip.sold += transaction.quantity;
+          } else if (transaction.ticketType === 'vvip') {
+            event.ticketTypes.vvip.sold += transaction.quantity;
+          }
+          event.ticketsSold += transaction.quantity;
+          event.totalRevenue += transaction.totalAmount;
+          await event.save({ session });
+        }
+
+        const tickets = [];
+        for (let i = 0; i < transaction.quantity; i++) {
+          const ticketNumber = await generateTicketNumber();
+          const qrCode = await generateQRCode(ticketNumber);
+          const ticket = new Ticket({
+            ticketNumber,
+            transactionId: transaction._id,
+            userId: transaction.userId,
+            eventId: transaction.eventId,
+            ticketType: transaction.ticketType,
+            qrCode,
+            status: 'active'
+          });
+          await ticket.save({ session });
+          tickets.push(ticket);
+        }
+
+        await session.commitTransaction();
+
+        await emailService.sendPaymentSuccessEmail(transaction.userId.toString(), transactionId);
+        await emailService.sendTicketConfirmation(transaction.userId.toString(), transactionId);
+
+        return { success: true, tickets, transaction };
+      } else {
+        transaction.paymentStatus = 'failed';
+        await transaction.save({ session });
+        await session.commitTransaction();
+
+        await emailService.sendPaymentFailedEmail(transaction.userId.toString(), transactionId, 'Payment processing failed');
+        return { success: false, message: 'Payment failed' };
+      }
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  async getUserTransactions(userId: string, page: number = 1, limit: number = 10): Promise<any> {
+    const skip = (page - 1) * limit;
+    const [transactions, total] = await Promise.all([
+      Transaction.find({ userId })
+        .populate('eventId', 'title slug date location image')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Transaction.countDocuments({ userId })
+    ]);
+
+    return {
+      data: transactions,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+    };
+  }
+
+  async getTransactionById(id: string): Promise<ITransaction> {
+    const transaction = await Transaction.findById(id)
+      .populate('userId', 'name email')
+      .populate('eventId', 'title slug date location');
+    if (!transaction) throw new Error('Transaction not found');
+    return transaction;
+  }
+
+  async getAllTransactions(page: number = 1, limit: number = 10): Promise<any> {
+    const skip = (page - 1) * limit;
+    const [transactions, total] = await Promise.all([
+      Transaction.find()
+        .populate('userId', 'name email')
+        .populate('eventId', 'title slug')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Transaction.countDocuments()
+    ]);
+
+    return {
+      data: transactions,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+    };
+  }
+}
+
+export default new TransactionService();

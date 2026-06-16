@@ -278,7 +278,6 @@ class TransactionService {
       await event.save();
     }
 
-    // টিকেট তৈরি করুন
     const tickets = [];
     for (let i = 0; i < transaction.quantity; i++) {
       const ticketNumber = await generateTicketNumber();

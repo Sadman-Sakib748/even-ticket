@@ -24,6 +24,7 @@ export class EventController {
       const result = await eventService.getEvents(filters, page, limit);
       sendSuccess(res, 200, 'Events fetched successfully', result);
     } catch (error) {
+      console.error('Get events error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch events';
       sendError(res, 400, errorMessage, error instanceof Error ? error : undefined);
     }
@@ -34,6 +35,7 @@ export class EventController {
       const event = await eventService.getEventById(req.params.id);
       sendSuccess(res, 200, 'Event fetched successfully', event);
     } catch (error) {
+      console.error('Get event by id error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch event';
       sendError(res, 400, errorMessage, error instanceof Error ? error : undefined);
     }
@@ -44,6 +46,7 @@ export class EventController {
       const event = await eventService.getEventBySlug(req.params.slug);
       sendSuccess(res, 200, 'Event fetched successfully', event);
     } catch (error) {
+      console.error('Get event by slug error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch event';
       sendError(res, 400, errorMessage, error instanceof Error ? error : undefined);
     }
@@ -56,10 +59,16 @@ export class EventController {
         return;
       }
 
+      console.log('📥 Create event request body:', req.body);
+
       const validated = createEventSchema.parse(req.body);
       const event = await eventService.createEvent(validated, req.user.userId);
+      
+      console.log('✅ Event created:', event);
       sendSuccess(res, 201, 'Event created successfully', event);
     } catch (error) {
+      console.error('❌ Create event error:', error);
+      
       if (error instanceof ZodError) {
         sendError(res, 400, 'Validation failed', undefined, error.errors);
         return;
@@ -80,6 +89,7 @@ export class EventController {
       const event = await eventService.updateEvent(req.params.id, req.user.userId, validated);
       sendSuccess(res, 200, 'Event updated successfully', event);
     } catch (error) {
+      console.error('Update event error:', error);
       if (error instanceof ZodError) {
         sendError(res, 400, 'Validation failed', undefined, error.errors);
         return;
@@ -99,6 +109,7 @@ export class EventController {
       const result = await eventService.deleteEvent(req.params.id, req.user.userId);
       sendSuccess(res, 200, result.message);
     } catch (error) {
+      console.error('Delete event error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to delete event';
       sendError(res, 400, errorMessage, error instanceof Error ? error : undefined);
     }
@@ -117,6 +128,7 @@ export class EventController {
       const result = await eventService.getOrganizerEvents(req.user.userId, page, limit);
       sendSuccess(res, 200, 'Events fetched successfully', result);
     } catch (error) {
+      console.error('Get my events error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch events';
       sendError(res, 400, errorMessage, error instanceof Error ? error : undefined);
     }
@@ -127,6 +139,7 @@ export class EventController {
       const events = await eventService.getFeaturedEvents();
       sendSuccess(res, 200, 'Featured events fetched successfully', events);
     } catch (error) {
+      console.error('Get featured events error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch events';
       sendError(res, 400, errorMessage, error instanceof Error ? error : undefined);
     }

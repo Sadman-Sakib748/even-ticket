@@ -2,25 +2,81 @@ import Event from '../models/Event.model';
 import Category from '../models/Category.model';
 import { AppError } from '../middleware/error.middleware';
 import slugify from 'slugify';
+import mongoose from 'mongoose';
 
 export class EventService {
   async createEvent(eventData: any, organizerId: string) {
-    const slug = slugify(eventData.title, { lower: true, strict: true });
+    try {
+      // Slug তৈরি করুন
+      const slug = slugify(eventData.title, { lower: true, strict: true });
 
-    const existingEvent = await Event.findOne({ slug });
-    if (existingEvent) {
-      throw new AppError(409, 'Event with this title already exists');
+      // চেক করুন slug ইতিমধ্যে আছে কিনা
+      const existingEvent = await Event.findOne({ slug });
+      if (existingEvent) {
+        throw new AppError(409, 'Event with this title already exists');
+      }
+
+      // Category টি ObjectId তে কনভার্ট করুন (যদি থাকে)
+      let categoryId = null;
+      if (eventData.category) {
+        // category নাম বা id হতে পারে
+        const category = await Category.findOne({ 
+          $or: [
+            { slug: eventData.category },
+            { _id: eventData.category }
+          ]
+        });
+        if (category) {
+          categoryId = category._id;
+        }
+      }
+
+      // ডেটা ফরম্যাট করুন
+      const newEvent = new Event({
+        title: eventData.title.trim(),
+        description: eventData.description.trim(),
+        fullDescription: eventData.fullDescription || '',
+        date: new Date(eventData.date),
+        time: eventData.time || '18:00',
+        endTime: eventData.endTime || '',
+        location: eventData.location.trim(),
+        venue: eventData.venue || '',
+        image: eventData.image || '',
+        gallery: eventData.gallery || [],
+        tags: eventData.tags || [],
+        category: categoryId,
+        organizerId: new mongoose.Types.ObjectId(organizerId),
+        isFeatured: eventData.isFeatured || false,
+        ticketTypes: {
+          regular: {
+            price: Number(eventData.ticketTypes.regular.price) || 0,
+            total: Number(eventData.ticketTypes.regular.total) || 100,
+            sold: 0,
+            available: true,
+            maxPerUser: 10
+          },
+          vip: {
+            price: Number(eventData.ticketTypes.vip.price) || 0,
+            total: Number(eventData.ticketTypes.vip.total) || 50,
+            sold: 0,
+            available: true,
+            maxPerUser: 5
+          },
+          vvip: {
+            price: Number(eventData.ticketTypes.vvip.price) || 0,
+            total: Number(eventData.ticketTypes.vvip.total) || 20,
+            sold: 0,
+            available: true,
+            maxPerUser: 3
+          }
+        }
+      });
+
+      await newEvent.save();
+      return newEvent.populate('category', 'name slug');
+    } catch (error) {
+      throw error;
     }
-
-    const event = new Event({
-      ...eventData,
-      slug,
-      organizerId,
-      date: new Date(eventData.date),
-    });
-
-    await event.save();
-    return event;
   }
 
   async getEvents(filters: any = {}, page: number = 1, limit: number = 10) {
@@ -75,6 +131,10 @@ export class EventService {
   }
 
   async getEventById(eventId: string) {
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      throw new AppError(400, 'Invalid event ID');
+    }
+
     const event = await Event.findByIdAndUpdate(
       eventId,
       { $inc: { views: 1 } },
@@ -123,6 +183,13 @@ export class EventService {
 
     if (updateData.date) {
       updateData.date = new Date(updateData.date);
+    }
+
+    if (updateData.category) {
+      const category = await Category.findOne({ slug: updateData.category });
+      if (category) {
+        updateData.category = category._id;
+      }
     }
 
     const updated = await Event.findByIdAndUpdate(eventId, updateData, {

@@ -9,7 +9,7 @@ export const createEventSchema = z.object({
   endTime: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Invalid time format').optional(),
   location: z.string().min(5, 'Location must be at least 5 characters'),
   venue: z.string().optional(),
-  category: z.string().optional(),
+  category: z.string().optional(), // ✅ String হিসেবে গ্রহণ করুন
   image: z.string().url('Invalid image URL').optional(),
   gallery: z.array(z.string().url()).optional(),
   tags: z.array(z.string()).optional(),

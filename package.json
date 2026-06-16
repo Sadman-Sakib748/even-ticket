@@ -2,11 +2,11 @@
   "name": "eventwave-backend",
   "version": "1.0.0",
   "description": "EventWave Backend API - Express.js + MongoDB + Mongoose",
-  "main": "dist/app.js",
+  "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon src/server.ts",
     "build": "tsc",
-    "start": "node dist/app.js",
+    "start": "node dist/server.js",
     "lint": "eslint src --ext .ts"
   },
   "keywords": [

@@ -19,10 +19,41 @@ const app: Application = express();
 // Security Middleware
 app.use(helmet());
 
+// ✅ CORS Configuration - Fixed
+const allowedOrigins = [
+  process.env.CORS_ORIGIN || 'https://event-ticket-rho.vercel.app',
+  'https://event-ticket-rho.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://even-ticket-peach.vercel.app'
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) {
+        return callback(null, true);
+      }
+      
+      // Development environment - allow all
+      if (process.env.NODE_ENV === 'development') {
+        return callback(null, true);
+      }
+      
+      // Check if origin is allowed
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log('❌ CORS blocked origin:', origin);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+    exposedHeaders: ['Content-Range', 'X-Content-Range'],
+    maxAge: 86400 // 24 hours
   })
 );
 

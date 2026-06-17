@@ -7,33 +7,55 @@ import mongoose from 'mongoose';
 export class EventService {
   async createEvent(eventData: any, organizerId: string) {
     try {
-      // Slug তৈরি করুন
-      const slug = slugify(eventData.title, { lower: true, strict: true });
+      console.log('📥 Service received data:', eventData);
 
-      // চেক করুন slug ইতিমধ্যে আছে কিনা
-      const existingEvent = await Event.findOne({ slug });
-      if (existingEvent) {
-        throw new AppError(409, 'Event with this title already exists');
+      // Slug তৈরি করুন
+      const baseSlug = slugify(eventData.title, { 
+        lower: true, 
+        strict: true,
+        remove: /[*+~.()'"!:@]/g
+      });
+      
+      let slug = baseSlug;
+      let slugExists = await Event.findOne({ slug });
+      let counter = 1;
+      
+      while (slugExists) {
+        slug = `${baseSlug}-${counter}`;
+        slugExists = await Event.findOne({ slug });
+        counter++;
       }
 
-      // Category টি ObjectId তে কনভার্ট করুন (যদি থাকে)
+      // 🔥 FIX: Category খুঁজে বের করুন - সঠিকভাবে
       let categoryId = null;
       if (eventData.category) {
-        // category নাম বা id হতে পারে
-        const category = await Category.findOne({ 
-          $or: [
-            { slug: eventData.category },
-            { _id: eventData.category }
-          ]
-        });
+        console.log('🔍 Looking for category:', eventData.category);
+        
+        // প্রথমে slug দিয়ে খুঁজুন
+        let category = await Category.findOne({ slug: eventData.category });
+        
+        // slug না পেলে name দিয়ে খুঁজুন
+        if (!category) {
+          category = await Category.findOne({ name: eventData.category });
+        }
+        
+        // name দিয়েও না পেলে _id দিয়ে চেক করুন (যদি valid ObjectId হয়)
+        if (!category && mongoose.Types.ObjectId.isValid(eventData.category)) {
+          category = await Category.findById(eventData.category);
+        }
+        
         if (category) {
           categoryId = category._id;
+          console.log('📂 Category found:', category.name, 'ID:', categoryId);
+        } else {
+          console.warn('⚠️ Category not found:', eventData.category);
         }
       }
 
       // ডেটা ফরম্যাট করুন
-      const newEvent = new Event({
+      const newEventData = {
         title: eventData.title.trim(),
+        slug: slug,
         description: eventData.description.trim(),
         fullDescription: eventData.fullDescription || '',
         date: new Date(eventData.date),
@@ -70,11 +92,17 @@ export class EventService {
             maxPerUser: 3
           }
         }
-      });
+      };
 
+      console.log('📦 Creating event with data:', JSON.stringify(newEventData, null, 2));
+
+      const newEvent = new Event(newEventData);
       await newEvent.save();
+      
+      console.log('✅ Event saved successfully:', newEvent._id);
       return newEvent.populate('category', 'name slug');
     } catch (error) {
+      console.error('❌ Create event service error:', error);
       throw error;
     }
   }
@@ -178,17 +206,52 @@ export class EventService {
     }
 
     if (updateData.title) {
-      updateData.slug = slugify(updateData.title, { lower: true, strict: true });
+      const baseSlug = slugify(updateData.title, { 
+        lower: true, 
+        strict: true,
+        remove: /[*+~.()'"!:@]/g
+      });
+      
+      let slug = baseSlug;
+      let slugExists = await Event.findOne({ slug, _id: { $ne: eventId } });
+      let counter = 1;
+      
+      while (slugExists) {
+        slug = `${baseSlug}-${counter}`;
+        slugExists = await Event.findOne({ slug, _id: { $ne: eventId } });
+        counter++;
+      }
+      
+      updateData.slug = slug;
     }
 
     if (updateData.date) {
-      updateData.date = new Date(updateData.date);
+      const eventDate = new Date(updateData.date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      if (eventDate < today) {
+        throw new AppError(400, 'Event date must be in the future');
+      }
+      updateData.date = eventDate;
     }
 
     if (updateData.category) {
-      const category = await Category.findOne({ slug: updateData.category });
+      // 🔥 FIX: Category খুঁজে বের করুন - সঠিকভাবে
+      let category = await Category.findOne({ slug: updateData.category });
+      
+      if (!category) {
+        category = await Category.findOne({ name: updateData.category });
+      }
+      
+      if (!category && mongoose.Types.ObjectId.isValid(updateData.category)) {
+        category = await Category.findById(updateData.category);
+      }
+      
       if (category) {
         updateData.category = category._id;
+      } else {
+        updateData.category = null;
       }
     }
 

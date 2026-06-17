@@ -4,6 +4,8 @@ import eventService from '../services/event.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { createEventSchema, updateEventSchema } from '../validations/event.validation';
 import { ZodError } from 'zod';
+import { AppError } from '../middleware/error.middleware';
+import mongoose from 'mongoose';
 
 export class EventController {
   async getEvents(req: Request, res: Response): Promise<void> {
@@ -61,7 +63,10 @@ export class EventController {
 
       console.log('📥 Create event request body:', req.body);
 
+      // Zod validation
       const validated = createEventSchema.parse(req.body);
+      
+      // Service এ পাঠান
       const event = await eventService.createEvent(validated, req.user.userId);
       
       console.log('✅ Event created:', event);
@@ -69,10 +74,30 @@ export class EventController {
     } catch (error) {
       console.error('❌ Create event error:', error);
       
+      // 🔥 Fix: Check if error is AppError
+      if (error instanceof AppError) {
+        sendError(res, error.statusCode || 400, error.message);
+        return;
+      }
+      
+      // 🔥 Fix: Check if error is ZodError
       if (error instanceof ZodError) {
         sendError(res, 400, 'Validation failed', undefined, error.errors);
         return;
       }
+      
+      // 🔥 Fix: Check if error is Mongoose ValidationError
+      if (error && typeof error === 'object' && 'name' in error && error.name === 'ValidationError') {
+        const validationError = error as mongoose.Error.ValidationError;
+        const errors = Object.values(validationError.errors).map((err: any) => ({
+          path: err.path,
+          message: err.message
+        }));
+        sendError(res, 400, 'Event validation failed', undefined, errors);
+        return;
+      }
+      
+      // 🔥 Fix: Handle unknown error type
       const errorMessage = error instanceof Error ? error.message : 'Failed to create event';
       sendError(res, 400, errorMessage, error instanceof Error ? error : undefined);
     }
@@ -90,10 +115,27 @@ export class EventController {
       sendSuccess(res, 200, 'Event updated successfully', event);
     } catch (error) {
       console.error('Update event error:', error);
+      
+      if (error instanceof AppError) {
+        sendError(res, error.statusCode || 400, error.message);
+        return;
+      }
+      
       if (error instanceof ZodError) {
         sendError(res, 400, 'Validation failed', undefined, error.errors);
         return;
       }
+      
+      if (error && typeof error === 'object' && 'name' in error && error.name === 'ValidationError') {
+        const validationError = error as mongoose.Error.ValidationError;
+        const errors = Object.values(validationError.errors).map((err: any) => ({
+          path: err.path,
+          message: err.message
+        }));
+        sendError(res, 400, 'Event validation failed', undefined, errors);
+        return;
+      }
+      
       const errorMessage = error instanceof Error ? error.message : 'Failed to update event';
       sendError(res, 400, errorMessage, error instanceof Error ? error : undefined);
     }
@@ -110,6 +152,12 @@ export class EventController {
       sendSuccess(res, 200, result.message);
     } catch (error) {
       console.error('Delete event error:', error);
+      
+      if (error instanceof AppError) {
+        sendError(res, error.statusCode || 400, error.message);
+        return;
+      }
+      
       const errorMessage = error instanceof Error ? error.message : 'Failed to delete event';
       sendError(res, 400, errorMessage, error instanceof Error ? error : undefined);
     }
